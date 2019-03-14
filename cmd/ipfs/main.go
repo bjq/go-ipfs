@@ -5,17 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
+	util "github.com/ipfs/go-ipfs/cmd/ipfs/util"
 	oldcmds "github.com/ipfs/go-ipfs/commands"
 	core "github.com/ipfs/go-ipfs/core"
 	corecmds "github.com/ipfs/go-ipfs/core/commands"
@@ -24,17 +21,17 @@ import (
 	repo "github.com/ipfs/go-ipfs/repo"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
 
-	u "gx/ipfs/QmNohiVssaPw3KVLZik59DBVGTSm2dGvYT9eoXt5DQ36Yz/go-ipfs-util"
-	"gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds"
-	"gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds/cli"
-	"gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds/http"
-	loggables "gx/ipfs/QmQSREHX6CMoPkT5FfuA4A9cWSFwoKY8RAzjf5m7Gpdtqu/go-libp2p-loggables"
-	manet "gx/ipfs/QmQVUtnrNGtCRkCMpXgpApfzQjc8FDaDVxHqWH8cnZQeh5/go-multiaddr-net"
-	ma "gx/ipfs/QmRKLtwMw131aK7ugC3G7ybpumMz78YrJe5dzneyindvG1/go-multiaddr"
-	madns "gx/ipfs/QmT4zgnKCyZBpRyxzsvZqUjzUkMWLJ2pZCw7uk6M6Kto5m/go-multiaddr-dns"
-	osh "gx/ipfs/QmXuBJ7DR6k3rmUEKtvVMhwjmXDuJgXXPUt4LQXKBMsU93/go-os-helper"
-	"gx/ipfs/QmYyzmMnhNTtoXx5ttgUaRdHHckYnQWjPL98hgLAR2QLDD/go-ipfs-config"
-	logging "gx/ipfs/QmcuXC5cxs79ro2cUuHs4HQ2bkDLJUYokwL8aivcX6HW3C/go-log"
+	osh "github.com/Kubuxu/go-os-helper"
+	"github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-cmds/cli"
+	"github.com/ipfs/go-ipfs-cmds/http"
+	"github.com/ipfs/go-ipfs-config"
+	u "github.com/ipfs/go-ipfs-util"
+	logging "github.com/ipfs/go-log"
+	loggables "github.com/libp2p/go-libp2p-loggables"
+	ma "github.com/multiformats/go-multiaddr"
+	madns "github.com/multiformats/go-multiaddr-dns"
+	manet "github.com/multiformats/go-multiaddr-net"
 )
 
 // log is the command logger
@@ -72,7 +69,7 @@ func loadPlugins(repoPath string) (*loader.PluginLoader, error) {
 		log.Error("error initializing plugins: ", err)
 	}
 
-	if err := plugins.Run(); err != nil {
+	if err := plugins.Inject(); err != nil {
 		log.Error("error running plugins: ", err)
 	}
 	return plugins, nil
@@ -106,7 +103,7 @@ func mainRet() int {
 	}
 	defer stopFunc() // to be executed as late as possible
 
-	intrh, ctx := setupInterruptHandler(ctx)
+	intrh, ctx := util.SetupInterruptHandler(ctx)
 	defer intrh.Close()
 
 	// Handle `ipfs version` or `ipfs help`
@@ -174,7 +171,6 @@ func mainRet() int {
 					return nil, err
 				}
 
-				n.SetLocal(true)
 				return n, nil
 			},
 		}, nil
@@ -353,70 +349,6 @@ func writeHeapProfileToFile() error {
 	}
 	defer mprof.Close() // _after_ writing the heap profile
 	return pprof.WriteHeapProfile(mprof)
-}
-
-// IntrHandler helps set up an interrupt handler that can
-// be cleanly shut down through the io.Closer interface.
-type IntrHandler struct {
-	sig chan os.Signal
-	wg  sync.WaitGroup
-}
-
-func NewIntrHandler() *IntrHandler {
-	ih := &IntrHandler{}
-	ih.sig = make(chan os.Signal, 1)
-	return ih
-}
-
-func (ih *IntrHandler) Close() error {
-	close(ih.sig)
-	ih.wg.Wait()
-	return nil
-}
-
-// Handle starts handling the given signals, and will call the handler
-// callback function each time a signal is catched. The function is passed
-// the number of times the handler has been triggered in total, as
-// well as the handler itself, so that the handling logic can use the
-// handler's wait group to ensure clean shutdown when Close() is called.
-func (ih *IntrHandler) Handle(handler func(count int, ih *IntrHandler), sigs ...os.Signal) {
-	signal.Notify(ih.sig, sigs...)
-	ih.wg.Add(1)
-	go func() {
-		defer ih.wg.Done()
-		count := 0
-		for range ih.sig {
-			count++
-			handler(count, ih)
-		}
-		signal.Stop(ih.sig)
-	}()
-}
-
-func setupInterruptHandler(ctx context.Context) (io.Closer, context.Context) {
-	intrh := NewIntrHandler()
-	ctx, cancelFunc := context.WithCancel(ctx)
-
-	handlerFunc := func(count int, ih *IntrHandler) {
-		switch count {
-		case 1:
-			fmt.Println() // Prevent un-terminated ^C character in terminal
-
-			ih.wg.Add(1)
-			go func() {
-				defer ih.wg.Done()
-				cancelFunc()
-			}()
-
-		default:
-			fmt.Println("Received another interrupt before graceful shutdown, terminating...")
-			os.Exit(-1)
-		}
-	}
-
-	intrh.Handle(handlerFunc, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-
-	return intrh, ctx
 }
 
 func profileIfEnabled() (func(), error) {

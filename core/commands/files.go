@@ -10,22 +10,23 @@ import (
 	"sort"
 	"strings"
 
-	core "github.com/ipfs/go-ipfs/core"
-	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	iface "github.com/ipfs/go-ipfs/core/coreapi/interface"
+	"github.com/ipfs/go-ipfs/core"
+	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
 
-	humanize "gx/ipfs/QmPSBJL4momYnE7DcUyk2DVhD6rH488ZmHBGLbxNdhU44K/go-humanize"
-	cmds "gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds"
-	bservice "gx/ipfs/QmPoh3SrQzFBWtdGK6qmHDV4EanKR6kYPj4DD3J2NLoEmZ/go-blockservice"
-	cid "gx/ipfs/QmR8BauakNcBa3RbE4nbQu76PDiJgoQgz8AJdhJuiU4TAw/go-cid"
-	offline "gx/ipfs/QmYZwey1thDTynSrvd6qQkX24UpTka6TFhQ2v569UpoqxD/go-ipfs-exchange-offline"
-	mfs "gx/ipfs/QmYnp3EVZqLjzm8NYigcB3aHqDLFmAVUvtaUdYb3nFDtK6/go-mfs"
-	ipld "gx/ipfs/QmcKKBwfz6FyQdHR2jsXrrF6XeSBXYL86anmWNewpFpoF5/go-ipld-format"
-	logging "gx/ipfs/QmcuXC5cxs79ro2cUuHs4HQ2bkDLJUYokwL8aivcX6HW3C/go-log"
-	dag "gx/ipfs/QmdV35UHnL1FM52baPkeUo6u7Fxm2CRUkPTLRPxeF8a4Ap/go-merkledag"
-	ft "gx/ipfs/QmdYvDbHp7qAhZ7GsCj6e1cMo55ND6y2mjWVzwdvcv4f12/go-unixfs"
-	cmdkit "gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
-	mh "gx/ipfs/QmerPMzPk1mJVowm8KgmoknWa4yCYvvugMPsgWmDNUvDLW/go-multihash"
+	"github.com/dustin/go-humanize"
+	bservice "github.com/ipfs/go-blockservice"
+	cid "github.com/ipfs/go-cid"
+	cidenc "github.com/ipfs/go-cidutil/cidenc"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-exchange-offline"
+	ipld "github.com/ipfs/go-ipld-format"
+	logging "github.com/ipfs/go-log"
+	dag "github.com/ipfs/go-merkledag"
+	"github.com/ipfs/go-mfs"
+	ft "github.com/ipfs/go-unixfs"
+	"github.com/ipfs/interface-go-ipfs-core"
+	mh "github.com/multiformats/go-multihash"
 )
 
 var flog = logging.Logger("cmds/files")
@@ -124,7 +125,7 @@ var filesStatCmd = &cmds.Command{
 			return err
 		}
 
-		api, err := cmdenv.GetApi(env)
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
 			return err
 		}
@@ -135,6 +136,11 @@ var filesStatCmd = &cmds.Command{
 		}
 
 		withLocal, _ := req.Options[filesWithLocalOptionName].(bool)
+
+		enc, err := cmdenv.GetCidEncoder(req)
+		if err != nil {
+			return err
+		}
 
 		var dagserv ipld.DAGService
 		if withLocal {
@@ -152,7 +158,7 @@ var filesStatCmd = &cmds.Command{
 			return err
 		}
 
-		o, err := statNode(nd)
+		o, err := statNode(nd, enc)
 		if err != nil {
 			return err
 		}
@@ -217,7 +223,7 @@ func statGetFormatOptions(req *cmds.Request) (string, error) {
 	}
 }
 
-func statNode(nd ipld.Node) (*statOutput, error) {
+func statNode(nd ipld.Node, enc cidenc.Encoder) (*statOutput, error) {
 	c := nd.Cid()
 
 	cumulsize, err := nd.Size()
@@ -243,7 +249,7 @@ func statNode(nd ipld.Node) (*statOutput, error) {
 		}
 
 		return &statOutput{
-			Hash:           c.String(),
+			Hash:           enc.Encode(c),
 			Blocks:         len(nd.Links()),
 			Size:           d.FileSize(),
 			CumulativeSize: cumulsize,
@@ -251,7 +257,7 @@ func statNode(nd ipld.Node) (*statOutput, error) {
 		}, nil
 	case *dag.RawNode:
 		return &statOutput{
-			Hash:           c.String(),
+			Hash:           enc.Encode(c),
 			Blocks:         0,
 			Size:           cumulsize,
 			CumulativeSize: cumulsize,
@@ -308,7 +314,7 @@ var filesCpCmd = &cmds.Command{
 			return err
 		}
 
-		api, err := cmdenv.GetApi(env)
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
 			return err
 		}
@@ -433,6 +439,11 @@ Examples:
 
 		long, _ := req.Options[longOptionName].(bool)
 
+		enc, err := cmdenv.GetCidEncoder(req)
+		if err != nil {
+			return err
+		}
+
 		switch fsn := fsn.(type) {
 		case *mfs.Directory:
 			if !long {
@@ -470,7 +481,7 @@ Examples:
 				if err != nil {
 					return err
 				}
-				out.Entries[0].Hash = nd.Cid().String()
+				out.Entries[0].Hash = enc.Encode(nd.Cid())
 			}
 			return cmds.EmitOnce(res, out)
 		default:
@@ -551,7 +562,7 @@ Examples:
 			return fmt.Errorf("%s was not a file", path)
 		}
 
-		rfd, err := fi.Open(mfs.OpenReadOnly, false)
+		rfd, err := fi.Open(mfs.Flags{Read: true})
 		if err != nil {
 			return err
 		}
@@ -625,6 +636,8 @@ Example:
 			return err
 		}
 
+		flush, _ := req.Options[filesFlushOptionName].(bool)
+
 		src, err := checkPath(req.Arguments[0])
 		if err != nil {
 			return err
@@ -634,7 +647,11 @@ Example:
 			return err
 		}
 
-		return mfs.Mv(nd.FilesRoot, src, dst)
+		err = mfs.Mv(nd.FilesRoot, src, dst)
+		if err == nil && flush {
+			err = mfs.FlushPath(nd.FilesRoot, "/")
+		}
+		return err
 	},
 }
 
@@ -736,7 +753,7 @@ stat' on the file or any of its ancestors.
 			fi.RawLeaves = rawLeaves
 		}
 
-		wfd, err := fi.Open(mfs.OpenWriteOnly, flush)
+		wfd, err := fi.Open(mfs.Flags{Write: true, Sync: flush})
 		if err != nil {
 			return err
 		}
@@ -769,12 +786,11 @@ stat' on the file or any of its ancestors.
 			return err
 		}
 
-		input, err := req.Files.NextFile()
+		var r io.Reader
+		r, err = cmdenv.GetFileArg(req.Files.Entries())
 		if err != nil {
 			return err
 		}
-
-		var r io.Reader = input
 		if countfound {
 			r = io.LimitReader(r, int64(count))
 		}
@@ -898,11 +914,15 @@ Change the cid version or hash function of the root node of a given path.
 			return err
 		}
 
-		return updatePath(nd.FilesRoot, path, prefix, flush)
+		err = updatePath(nd.FilesRoot, path, prefix)
+		if err == nil && flush {
+			err = mfs.FlushPath(nd.FilesRoot, path)
+		}
+		return err
 	},
 }
 
-func updatePath(rt *mfs.Root, pth string, builder cid.Builder, flush bool) error {
+func updatePath(rt *mfs.Root, pth string, builder cid.Builder) error {
 	if builder == nil {
 		return nil
 	}
@@ -917,10 +937,6 @@ func updatePath(rt *mfs.Root, pth string, builder cid.Builder, flush bool) error
 		n.SetCidBuilder(builder)
 	default:
 		return fmt.Errorf("can only update directories")
-	}
-
-	if flush {
-		nd.Flush()
 	}
 
 	return nil

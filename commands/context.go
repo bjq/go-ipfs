@@ -8,19 +8,19 @@ import (
 
 	core "github.com/ipfs/go-ipfs/core"
 	coreapi "github.com/ipfs/go-ipfs/core/coreapi"
-	coreiface "github.com/ipfs/go-ipfs/core/coreapi/interface"
 	loader "github.com/ipfs/go-ipfs/plugin/loader"
 
-	"gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds"
-	config "gx/ipfs/QmYyzmMnhNTtoXx5ttgUaRdHHckYnQWjPL98hgLAR2QLDD/go-ipfs-config"
-	logging "gx/ipfs/QmcuXC5cxs79ro2cUuHs4HQ2bkDLJUYokwL8aivcX6HW3C/go-log"
+	"github.com/ipfs/go-ipfs-cmds"
+	config "github.com/ipfs/go-ipfs-config"
+	logging "github.com/ipfs/go-log"
+	coreiface "github.com/ipfs/interface-go-ipfs-core"
+	options "github.com/ipfs/interface-go-ipfs-core/options"
 )
 
 var log = logging.Logger("command")
 
 // Context represents request context
 type Context struct {
-	Online     bool
 	ConfigRoot string
 	ReqLog     *ReqLog
 
@@ -29,6 +29,7 @@ type Context struct {
 	config     *config.Config
 	LoadConfig func(path string) (*config.Config, error)
 
+	Gateway       bool
 	api           coreiface.CoreAPI
 	node          *core.IpfsNode
 	ConstructNode func() (*core.IpfsNode, error)
@@ -68,7 +69,19 @@ func (c *Context) GetAPI() (coreiface.CoreAPI, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.api = coreapi.NewCoreAPI(n)
+		fetchBlocks := true
+		if c.Gateway {
+			cfg, err := c.GetConfig()
+			if err != nil {
+				return nil, err
+			}
+			fetchBlocks = !cfg.Gateway.NoFetch
+		}
+
+		c.api, err = coreapi.NewCoreAPI(n, options.Api.FetchBlocks(fetchBlocks))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return c.api, nil
 }

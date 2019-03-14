@@ -7,12 +7,12 @@ import (
 	"text/tabwriter"
 
 	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	iface "github.com/ipfs/go-ipfs/core/coreapi/interface"
 
-	cmds "gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds"
-	merkledag "gx/ipfs/QmdV35UHnL1FM52baPkeUo6u7Fxm2CRUkPTLRPxeF8a4Ap/go-merkledag"
-	unixfs "gx/ipfs/QmdYvDbHp7qAhZ7GsCj6e1cMo55ND6y2mjWVzwdvcv4f12/go-unixfs"
-	cmdkit "gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	cmdkit "github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	merkledag "github.com/ipfs/go-merkledag"
+	unixfs "github.com/ipfs/go-unixfs"
+	iface "github.com/ipfs/interface-go-ipfs-core"
 )
 
 type LsLink struct {
@@ -77,7 +77,7 @@ possible, please use 'ipfs ls' instead.
 			return err
 		}
 
-		api, err := cmdenv.GetApi(env)
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
 			return err
 		}

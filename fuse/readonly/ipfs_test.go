@@ -4,28 +4,31 @@ package readonly
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 
 	core "github.com/ipfs/go-ipfs/core"
 	coreapi "github.com/ipfs/go-ipfs/core/coreapi"
-	iface "github.com/ipfs/go-ipfs/core/coreapi/interface"
 	coremock "github.com/ipfs/go-ipfs/core/mock"
 
-	u "gx/ipfs/QmNohiVssaPw3KVLZik59DBVGTSm2dGvYT9eoXt5DQ36Yz/go-ipfs-util"
-	ci "gx/ipfs/QmPuhRE325DR8ChNcFtgd6F1eANCHy1oohXZPpYop4xsK6/go-testutil/ci"
-	chunker "gx/ipfs/QmR4QQVkBZsZENRjYFVi8dEtPL3daZRNKk24m4r6WKJHNm/go-ipfs-chunker"
-	fstest "gx/ipfs/QmSJBsmLP1XMjv8hxYg2rUMdPDB7YUpyBo9idjrJ6Cmq6F/fuse/fs/fstestutil"
-	ipld "gx/ipfs/QmcKKBwfz6FyQdHR2jsXrrF6XeSBXYL86anmWNewpFpoF5/go-ipld-format"
-	dag "gx/ipfs/QmdV35UHnL1FM52baPkeUo6u7Fxm2CRUkPTLRPxeF8a4Ap/go-merkledag"
-	importer "gx/ipfs/QmdYvDbHp7qAhZ7GsCj6e1cMo55ND6y2mjWVzwdvcv4f12/go-unixfs/importer"
-	uio "gx/ipfs/QmdYvDbHp7qAhZ7GsCj6e1cMo55ND6y2mjWVzwdvcv4f12/go-unixfs/io"
+	fstest "bazil.org/fuse/fs/fstestutil"
+	chunker "github.com/ipfs/go-ipfs-chunker"
+	files "github.com/ipfs/go-ipfs-files"
+	u "github.com/ipfs/go-ipfs-util"
+	ipld "github.com/ipfs/go-ipld-format"
+	dag "github.com/ipfs/go-merkledag"
+	importer "github.com/ipfs/go-unixfs/importer"
+	uio "github.com/ipfs/go-unixfs/io"
+	iface "github.com/ipfs/interface-go-ipfs-core"
+	ci "github.com/libp2p/go-testutil/ci"
 )
 
 func maybeSkipFuseTests(t *testing.T) {
@@ -117,7 +120,10 @@ func TestIpfsStressRead(t *testing.T) {
 	nd, mnt := setupIpfsTest(t, nil)
 	defer mnt.Close()
 
-	api := coreapi.NewCoreAPI(nd)
+	api, err := coreapi.NewCoreAPI(nd)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var nodes []ipld.Node
 	var paths []string
@@ -169,21 +175,30 @@ func TestIpfsStressRead(t *testing.T) {
 
 			for i := 0; i < 2000; i++ {
 				item, _ := iface.ParsePath(paths[rand.Intn(len(paths))])
-				fname := path.Join(mnt.Dir, item.String())
+
+				relpath := strings.Replace(item.String(), item.Namespace(), "", 1)
+				fname := path.Join(mnt.Dir, relpath)
+
 				rbuf, err := ioutil.ReadFile(fname)
 				if err != nil {
 					errs <- err
 				}
 
-				read, err := api.Unixfs().Get(nd.Context(), item)
+				//nd.Context() is never closed which leads to
+				//hitting 8128 goroutine limit in go test -race mode
+				ctx, cancelFunc := context.WithCancel(context.Background())
+
+				read, err := api.Unixfs().Get(ctx, item)
 				if err != nil {
 					errs <- err
 				}
 
-				data, err := ioutil.ReadAll(read)
+				data, err := ioutil.ReadAll(read.(files.File))
 				if err != nil {
 					errs <- err
 				}
+
+				cancelFunc()
 
 				if !bytes.Equal(rbuf, data) {
 					errs <- errors.New("incorrect read")

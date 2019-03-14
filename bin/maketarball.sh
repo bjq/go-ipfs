@@ -5,18 +5,20 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-OUTPUT="$(readlink -f "${1:-go-ipfs-source.tar.gz}")"
+# readlink doesn't work on macos
+OUTPUT="${1:-go-ipfs-source.tar.gz}"
+if ! [[ "$OUTPUT" = /* ]]; then
+  OUTPUT="$PWD/$OUTPUT"
+fi
 
 TMPDIR="$(mktemp -d)"
-NEWIPFS="$TMPDIR/src/github.com/ipfs/go-ipfs"
-mkdir -p "$NEWIPFS"
-cp -r . "$NEWIPFS"
-( cd "$NEWIPFS" &&
-      echo $PWD &&
-      GOPATH="$TMPDIR" gx install --local &&
-      (git rev-parse --short HEAD || true) > .tarball &&
-      chmod -R u=rwX,go=rX "$NEWIPFS" # normalize permissions
-      tar -czf "$OUTPUT" --exclude="./.git" .
-)
+cp -r . "$TMPDIR"
+( cd "$TMPDIR" &&
+  echo $PWD &&
+  go mod vendor &&
+  (git describe --always --match=NeVeRmAtCh --dirty 2>/dev/null || true) > .tarball &&
+  chmod -R u=rwX,go=rX "$TMPDIR" # normalize permissions
+  tar -czf "$OUTPUT" --exclude="./.git" .
+  )
 
 rm -rf "$TMPDIR"

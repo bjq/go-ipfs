@@ -7,10 +7,11 @@ import (
 	"os"
 
 	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/core/coreapi/interface"
 
-	cmds "gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-files"
+	"github.com/ipfs/interface-go-ipfs-core"
 )
 
 const (
@@ -33,7 +34,7 @@ var CatCmd = &cmds.Command{
 		cmdkit.Int64Option(lengthOptionName, "l", "Maximum number of bytes to read."),
 	},
 	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
-		api, err := cmdenv.GetApi(env)
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
 			return err
 		}
@@ -122,13 +123,19 @@ func cat(ctx context.Context, api iface.CoreAPI, paths []string, offset int64, m
 			return nil, 0, err
 		}
 
-		file, err := api.Unixfs().Get(ctx, fpath)
+		f, err := api.Unixfs().Get(ctx, fpath)
 		if err != nil {
 			return nil, 0, err
 		}
 
-		if file.IsDirectory() {
+		var file files.File
+		switch f := f.(type) {
+		case files.File:
+			file = f
+		case files.Directory:
 			return nil, 0, iface.ErrIsDir
+		default:
+			return nil, 0, iface.ErrNotSupported
 		}
 
 		fsize, err := file.Size()

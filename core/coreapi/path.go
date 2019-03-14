@@ -6,13 +6,13 @@ import (
 	gopath "path"
 
 	"github.com/ipfs/go-ipfs/core"
-	coreiface "github.com/ipfs/go-ipfs/core/coreapi/interface"
 
-	"gx/ipfs/QmR8BauakNcBa3RbE4nbQu76PDiJgoQgz8AJdhJuiU4TAw/go-cid"
-	ipfspath "gx/ipfs/QmZErC2Ay6WuGi96CPg316PwitdwgLo6RxZRqVjJjRj2MR/go-path"
-	"gx/ipfs/QmZErC2Ay6WuGi96CPg316PwitdwgLo6RxZRqVjJjRj2MR/go-path/resolver"
-	ipld "gx/ipfs/QmcKKBwfz6FyQdHR2jsXrrF6XeSBXYL86anmWNewpFpoF5/go-ipld-format"
-	uio "gx/ipfs/QmdYvDbHp7qAhZ7GsCj6e1cMo55ND6y2mjWVzwdvcv4f12/go-unixfs/io"
+	"github.com/ipfs/go-cid"
+	ipld "github.com/ipfs/go-ipld-format"
+	ipfspath "github.com/ipfs/go-path"
+	"github.com/ipfs/go-path/resolver"
+	uio "github.com/ipfs/go-unixfs/io"
+	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 
 // ResolveNode resolves the path `p` using Unixfs resolver, gets and returns the
@@ -38,7 +38,7 @@ func (api *CoreAPI) ResolvePath(ctx context.Context, p coreiface.Path) (coreifac
 	}
 
 	ipath := ipfspath.Path(p.String())
-	ipath, err := core.ResolveIPNS(ctx, api.node.Namesys, ipath)
+	ipath, err := core.ResolveIPNS(ctx, api.namesys, ipath)
 	if err == core.ErrNoNamesys {
 		return nil, coreiface.ErrOffline
 	} else if err != nil {

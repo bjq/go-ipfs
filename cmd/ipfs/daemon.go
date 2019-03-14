@@ -17,18 +17,20 @@ import (
 	oldcmds "github.com/ipfs/go-ipfs/commands"
 	"github.com/ipfs/go-ipfs/core"
 	commands "github.com/ipfs/go-ipfs/core/commands"
+	coreapi "github.com/ipfs/go-ipfs/core/coreapi"
 	corehttp "github.com/ipfs/go-ipfs/core/corehttp"
 	corerepo "github.com/ipfs/go-ipfs/core/corerepo"
 	nodeMount "github.com/ipfs/go-ipfs/fuse/node"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
 	migrate "github.com/ipfs/go-ipfs/repo/fsrepo/migrations"
 
-	cmds "gx/ipfs/QmPdvMtgpnMuU68mWhGtzCxnddXJoV96tT9aPcNbQsqPaM/go-ipfs-cmds"
-	"gx/ipfs/QmQVUtnrNGtCRkCMpXgpApfzQjc8FDaDVxHqWH8cnZQeh5/go-multiaddr-net"
-	ma "gx/ipfs/QmRKLtwMw131aK7ugC3G7ybpumMz78YrJe5dzneyindvG1/go-multiaddr"
-	"gx/ipfs/QmTQuFQWHAWy4wMH6ZyPfGiawA5u9T8rs79FENoV8yXaoS/client_golang/prometheus"
-	mprome "gx/ipfs/QmVMcMs6duiwLzvhF6xWM3yc4GgjpNoctKFhvtBch5tpgo/go-metrics-prometheus"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	mprome "github.com/ipfs/go-metrics-prometheus"
+	goprocess "github.com/jbenet/goprocess"
+	ma "github.com/multiformats/go-multiaddr"
+	"github.com/multiformats/go-multiaddr-net"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -40,7 +42,7 @@ const (
 	ipnsMountKwd              = "mount-ipns"
 	migrateKwd                = "migrate"
 	mountKwd                  = "mount"
-	offlineKwd                = "offline"
+	offlineKwd                = "offline" // global option
 	routingOptionKwd          = "routing"
 	routingOptionSupernodeKwd = "supernode"
 	routingOptionDHTClientKwd = "dhtclient"
@@ -161,7 +163,6 @@ Headers.
 		cmdkit.BoolOption(unencryptTransportKwd, "Disable transport encryption (for debugging protocols)"),
 		cmdkit.BoolOption(enableGCKwd, "Enable automatic periodic repo garbage collection"),
 		cmdkit.BoolOption(adjustFDLimitKwd, "Check and raise file descriptor limits if needed").WithDefault(true),
-		cmdkit.BoolOption(offlineKwd, "Run offline. Do not connect to the rest of the network but provide local API."),
 		cmdkit.BoolOption(migrateKwd, "If true, assume yes at the migrate prompt. If false, assume no."),
 		cmdkit.BoolOption(enablePubSubKwd, "Instantiate the ipfs daemon with the experimental pubsub feature enabled."),
 		cmdkit.BoolOption(enableIPNSPubSubKwd, "Enable IPNS record distribution through pubsub; enables pubsub."),
@@ -186,7 +187,7 @@ func defaultMux(path string) corehttp.ServeOption {
 	}
 }
 
-func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment) error {
+func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment) (_err error) {
 	// Inject metrics before we do anything
 	err := mprome.Inject()
 	if err != nil {
@@ -196,27 +197,26 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 	// let the user know we're going.
 	fmt.Printf("Initializing daemon...\n")
 
+	defer func() {
+		if _err != nil {
+			// Print an extra line before any errors. This could go
+			// in the commands lib but doesn't really make sense for
+			// all commands.
+			fmt.Println()
+		}
+	}()
+
 	// print the ipfs version
 	printVersion()
 
 	managefd, _ := req.Options[adjustFDLimitKwd].(bool)
 	if managefd {
-		if changedFds, newFdsLimit, err := utilmain.ManageFdLimit(); err != nil {
+		if _, _, err := utilmain.ManageFdLimit(); err != nil {
 			log.Errorf("setting file descriptor limit: %s", err)
-		} else {
-			if changedFds {
-				fmt.Printf("Successfully raised file descriptor limit to %d.\n", newFdsLimit)
-			}
 		}
 	}
 
 	cctx := env.(*oldcmds.Context)
-
-	go func() {
-		<-req.Context.Done()
-		fmt.Println("Received interrupt signal, shutting down...")
-		fmt.Println("(Hit ctrl-c again to force-shutdown the daemon.)")
-	}()
 
 	// check transport encryption flag.
 	unencrypted, _ := req.Options[unencryptTransportKwd].(bool)
@@ -332,7 +332,7 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 		log.Error("error from node construction: ", err)
 		return err
 	}
-	node.SetLocal(false)
+	node.IsDaemon = true
 
 	if node.PNetFingerprint != nil {
 		fmt.Println("Swarm is limited to private network of peers with the swarm key")
@@ -356,6 +356,18 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 	cctx.ConstructNode = func() (*core.IpfsNode, error) {
 		return node, nil
 	}
+
+	// Start "core" plugins. We want to do this *before* starting the HTTP
+	// API as the user may be relying on these plugins.
+	api, err := coreapi.NewCoreAPI(node)
+	if err != nil {
+		return err
+	}
+	err = cctx.Plugins.Start(api)
+	if err != nil {
+		return err
+	}
+	node.Process().AddChild(goprocess.WithTeardown(cctx.Plugins.Close))
 
 	// construct api endpoint - every time
 	apiErrc, err := serveHTTPApi(req, cctx)
@@ -393,7 +405,16 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 	// initialize metrics collector
 	prometheus.MustRegister(&corehttp.IpfsNodeCollector{Node: node})
 
+	// The daemon is *finally* ready.
 	fmt.Printf("Daemon is ready\n")
+
+	// Give the user some immediate feedback when they hit C-c
+	go func() {
+		<-req.Context.Done()
+		fmt.Println("Received interrupt signal, shutting down...")
+		fmt.Println("(Hit ctrl-c again to force-shutdown the daemon.)")
+	}()
+
 	// collect long-running errors and block for shutdown
 	// TODO(cryptix): our fuse currently doesnt follow this pattern for graceful shutdown
 	for err := range merge(apiErrc, gwErrc, gcErrc) {
@@ -496,7 +517,7 @@ func serveHTTPApi(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, error
 
 // printSwarmAddrs prints the addresses of the host
 func printSwarmAddrs(node *core.IpfsNode) {
-	if !node.OnlineMode() {
+	if !node.IsOnline {
 		fmt.Println("Swarm not listening, running in offline mode.")
 		return
 	}
@@ -561,13 +582,16 @@ func serveHTTPGateway(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, e
 		listeners = append(listeners, gwLis)
 	}
 
+	cmdctx := *cctx
+	cmdctx.Gateway = true
+
 	var opts = []corehttp.ServeOption{
 		corehttp.MetricsCollectionOption("gateway"),
 		corehttp.IPNSHostnameOption(),
 		corehttp.GatewayOption(writable, "/ipfs", "/ipns"),
 		corehttp.VersionOption(),
 		corehttp.CheckVersionOption(),
-		corehttp.CommandsROOption(*cctx),
+		corehttp.CommandsROOption(cmdctx),
 	}
 
 	if cfg.Experimental.P2pHttpProxy {
