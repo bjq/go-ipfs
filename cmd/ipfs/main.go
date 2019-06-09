@@ -37,8 +37,6 @@ import (
 // log is the command logger
 var log = logging.Logger("cmd/ipfs")
 
-var errRequestCanceled = errors.New("request canceled")
-
 // declared as a var for testing purposes
 var dnsResolver = madns.DefaultResolver
 
@@ -62,15 +60,15 @@ func loadPlugins(repoPath string) (*loader.PluginLoader, error) {
 	}
 	plugins, err = loader.NewPluginLoader(pluginpath)
 	if err != nil {
-		log.Error("error loading plugins: ", err)
+		return nil, fmt.Errorf("error loading plugins: %s", err)
 	}
 
 	if err := plugins.Initialize(); err != nil {
-		log.Error("error initializing plugins: ", err)
+		return nil, fmt.Errorf("error initializing plugins: %s", err)
 	}
 
 	if err := plugins.Inject(); err != nil {
-		log.Error("error running plugins: ", err)
+		return nil, fmt.Errorf("error initializing plugins: %s", err)
 	}
 	return plugins, nil
 }
@@ -325,7 +323,11 @@ func startProfiling() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	pprof.StartCPUProfile(ofi)
+	err = pprof.StartCPUProfile(ofi)
+	if err != nil {
+		ofi.Close()
+		return nil, err
+	}
 	go func() {
 		for range time.NewTicker(time.Second * 30).C {
 			err := writeHeapProfileToFile()

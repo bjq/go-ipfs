@@ -13,6 +13,8 @@ import (
 
 	core "github.com/ipfs/go-ipfs/core"
 	namesys "github.com/ipfs/go-ipfs/namesys"
+	resolve "github.com/ipfs/go-ipfs/namesys/resolve"
+
 	dag "github.com/ipfs/go-merkledag"
 	path "github.com/ipfs/go-path"
 	ft "github.com/ipfs/go-unixfs"
@@ -22,8 +24,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log"
 	mfs "github.com/ipfs/go-mfs"
-	ci "github.com/libp2p/go-libp2p-crypto"
-	peer "github.com/libp2p/go-libp2p-peer"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
+	peer "github.com/libp2p/go-libp2p-core/peer"
 )
 
 func init() {
@@ -96,7 +98,7 @@ func loadRoot(ctx context.Context, rt *keyRoot, ipfs *core.IpfsNode, name string
 		return nil, err
 	}
 
-	node, err := core.Resolve(ctx, ipfs.Namesys, ipfs.Resolver, p)
+	node, err := resolve.Resolve(ctx, ipfs.Namesys, ipfs.Resolver, p)
 	switch err {
 	case nil:
 	case namesys.ErrResolveFailed:

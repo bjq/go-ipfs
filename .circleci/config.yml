@@ -2,17 +2,17 @@ version: 2.0
 
 aliases:
   make_out_dirs: &make_out_dirs
-    run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS/{unit,sharness}
+    run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_WORKSPACE $CIRCLE_TEST_REPORTS/{unit,sharness}
   restore_gomod: &restore_gomod
     restore_cache:
       keys:
-        - v3-dep-{{ .Branch }}-{{ checksum "~/ipfs/go-ipfs/go.sum" }}-{{ .Environment.CIRCLE_JOB }}
-        - v3-dep-{{ .Branch }}-{{ checksum "~/ipfs/go-ipfs/go.sum" }}-
-        - v3-dep-{{ .Branch }}-
-        - v3-dep-master-
+        - v4-dep-{{ .Branch }}-{{ checksum "~/ipfs/go-ipfs/go.sum" }}-{{ .Environment.CIRCLE_JOB }}
+        - v4-dep-{{ .Branch }}-{{ checksum "~/ipfs/go-ipfs/go.sum" }}-
+        - v4-dep-{{ .Branch }}-
+        - v4-dep-master-
   store_gomod: &store_gomod
       save_cache:
-        key: v3-dep-{{ .Branch }}-{{ checksum "~/ipfs/go-ipfs/go.sum" }}-{{ .Environment.CIRCLE_JOB }}
+        key: v4-dep-{{ .Branch }}-{{ checksum "~/ipfs/go-ipfs/go.sum" }}-{{ .Environment.CIRCLE_JOB }}
         paths:
           - ~/go/pkg/mod
           - ~/.cache/go-build/
@@ -29,21 +29,48 @@ defaults: &defaults
     CIRCLE: 1
     SERVICE: circle-ci
     CIRCLE_ARTIFACTS: /tmp/circleci-artifacts
+    CIRCLE_WORKSPACE: /tmp/circleci-workspace
     TEST_VERBOSE: 1
     TRAVIS: 1
 
-  docker:
-    - image: circleci/golang:1.11
-
 jobs:
+  gobuild:
+    docker:
+      - image: circleci/golang:1.12
+    <<: *defaults
+    steps:
+    - checkout
+    - *make_out_dirs
+    - *restore_gomod
+    - run:
+        command: make cmd/ipfs-try-build
+        environment:
+          TEST_NO_FUSE: 0
+    - run:
+        command: make cmd/ipfs-try-build
+        environment:
+          TEST_NO_FUSE: 1
+    - *store_gomod
+  golint:
+    <<: *defaults
+    docker:
+      - image: circleci/golang:1.12
+    steps:
+    - checkout
+    - *make_out_dirs
+    - *restore_gomod
+    - run: |
+        make -O test_go_lint
+    - *store_gomod
   gotest:
+    docker:
+      - image: circleci/golang:1.12
     <<: *defaults
     steps:
     - checkout
     - *make_out_dirs
     - *restore_gomod
 
-    - run: make cmd/ipfs-try-build
     - run: |
         make -j 1 test/unit/gotest.junit.xml \
         && [[ ! $(jq -s -c 'map(select(.Action == "fail")) | .[]' test/unit/gotest.json) ]]
@@ -65,6 +92,8 @@ jobs:
     - store_artifacts:
         path: /tmp/circleci-test-results
   sharness:
+    docker:
+      - image: circleci/golang:1.12
     <<: *defaults
     steps:
     - run: sudo apt install socat
@@ -72,7 +101,7 @@ jobs:
     - *make_out_dirs
     - *restore_gomod
 
-    - run: make -j 10 coverage/sharness_tests.coverprofile test/sharness/test-results/sharness.xml TEST_GENERATE_JUNIT=1 CONTINUE_ON_S_FAILURE=1
+    - run: make -O -j 10 coverage/sharness_tests.coverprofile test/sharness/test-results/sharness.xml TEST_GENERATE_JUNIT=1 CONTINUE_ON_S_FAILURE=1
 
     - run:
         when: always
@@ -91,10 +120,51 @@ jobs:
         path: /tmp/circleci-artifacts
     - store_artifacts:
         path: /tmp/circleci-test-results
+  build-interop:
+    docker:
+      - image: circleci/golang:1.12
+    <<: *defaults
+    steps:
+      - checkout
+      - *make_out_dirs
+      - *restore_gomod
+      - run: make build
+      - run: cp cmd/ipfs/ipfs /tmp/circleci-workspace
+      - persist_to_workspace:
+          root: /tmp/circleci-workspace
+          paths:
+            - ipfs
+      - *store_gomod
+  interop:
+    docker:
+      - image: circleci/node:10
+    <<: *defaults
+    steps:
+      - *make_out_dirs
+      - attach_workspace:
+          at: /tmp/circleci-workspace
+      - run: git clone https://github.com/ipfs/interop.git
+      - run:
+          command: npm install
+          working_directory: ~/ipfs/go-ipfs/interop
+          environment:
+            IPFS_GO_EXEC: /tmp/circleci-workspace/ipfs
+      - run:
+          command: npm test
+          working_directory: ~/ipfs/go-ipfs/interop
+          environment:
+            IPFS_GO_EXEC: /tmp/circleci-workspace/ipfs
+
 
 workflows:
   version: 2
   test:
     jobs:
+    - gobuild
+    - golint
     - gotest
     - sharness
+    - build-interop
+    - interop:
+        requires:
+          - build-interop

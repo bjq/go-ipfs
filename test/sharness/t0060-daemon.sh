@@ -71,6 +71,16 @@ test_expect_success "ipfs version output looks good" '
   test_fsh cat version.txt
 '
 
+test_expect_success "ipfs version deps succeeds" '
+  ipfs version deps >deps.txt
+'
+
+test_expect_success "ipfs version deps output looks good" '
+  head -1 deps.txt | grep "go-ipfs@(devel)" &&
+  [[ $(tail -n +2 deps.txt | egrep -v -c "^[^ @]+@v[^ @]+( => [^ @]+@v[^ @]+)?$") -eq 0 ]] ||
+  test_fsh cat deps.txt
+'
+
 test_expect_success "ipfs help succeeds" '
   ipfs help >help.txt
 '
@@ -126,6 +136,11 @@ test_expect_success "daemon with pipe eventually becomes live" '
   pollEndpoint -host='$API_MADDR' -ep=/version -v -tout=1s -tries=10 >stdin_poll_apiout 2>stdin_poll_apierr &&
   test_kill_repeat_10_sec $DAEMON_PID ||
   test_fsh cat stdin_daemon_out || test_fsh cat stdin_daemon_err || test_fsh cat stdin_poll_apiout || test_fsh cat stdin_poll_apierr
+'
+
+test_expect_success "'ipfs daemon' cleans up when it fails to start" '
+  test_must_fail ipfs daemon --routing=foobar &&
+  test ! -e "$IPFS_PATH/repo.lock"
 '
 
 ulimit -S -n 512

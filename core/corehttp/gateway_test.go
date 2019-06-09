@@ -22,9 +22,9 @@ import (
 	files "github.com/ipfs/go-ipfs-files"
 	path "github.com/ipfs/go-path"
 	iface "github.com/ipfs/interface-go-ipfs-core"
-	"github.com/ipfs/interface-go-ipfs-core/options"
 	nsopts "github.com/ipfs/interface-go-ipfs-core/options/namesys"
-	ci "github.com/libp2p/go-libp2p-crypto"
+	ipath "github.com/ipfs/interface-go-ipfs-core/path"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
 	id "github.com/libp2p/go-libp2p/p2p/protocol/identify"
 )
 
@@ -44,7 +44,7 @@ func (m mockNamesys) Resolve(ctx context.Context, name string, opts ...nsopts.Re
 		depth = ^uint(0)
 	}
 	for strings.HasPrefix(name, "/ipns/") {
-		if depth <= 0 {
+		if depth == 0 {
 			return value, namesys.ErrResolveRecursion
 		}
 		depth--
@@ -236,9 +236,6 @@ func TestGatewayGet(t *testing.T) {
 }
 
 func TestIPNSHostnameRedirect(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	ns := mockNamesys{}
 	ts, api, ctx := newTestServerAndNode(t, ns)
 	t.Logf("test server url: %s", ts.URL)
@@ -253,7 +250,7 @@ func TestIPNSHostnameRedirect(t *testing.T) {
 		}),
 	})
 
-	k, err := api.Unixfs().Add(ctx, f1, options.Unixfs.Wrap(true))
+	k, err := api.Unixfs().Add(ctx, f1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,9 +324,6 @@ func TestIPNSHostnameRedirect(t *testing.T) {
 }
 
 func TestIPNSHostnameBacklinks(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	ns := mockNamesys{}
 	ts, api, ctx := newTestServerAndNode(t, ns)
 	t.Logf("test server url: %s", ts.URL)
@@ -346,17 +340,17 @@ func TestIPNSHostnameBacklinks(t *testing.T) {
 	})
 
 	// create /ipns/example.net/foo/
-	k, err := api.Unixfs().Add(ctx, f1, options.Unixfs.Wrap(true))
+	k, err := api.Unixfs().Add(ctx, f1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	k2, err := api.ResolvePath(ctx, iface.Join(k, "foo? #<'"))
+	k2, err := api.ResolvePath(ctx, ipath.Join(k, "foo? #<'"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	k3, err := api.ResolvePath(ctx, iface.Join(k, "foo? #<'/bar"))
+	k3, err := api.ResolvePath(ctx, ipath.Join(k, "foo? #<'/bar"))
 	if err != nil {
 		t.Fatal(err)
 	}

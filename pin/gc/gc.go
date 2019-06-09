@@ -39,6 +39,7 @@ type Result struct {
 // The routine then iterates over every block in the blockstore and
 // deletes any block that is not found in the marked set.
 func GC(ctx context.Context, bs bstore.GCBlockstore, dstor dstore.Datastore, pn pin.Pinner, bestEffortRoots []cid.Cid) <-chan Result {
+	ctx, cancel := context.WithCancel(ctx)
 
 	elock := log.EventBegin(ctx, "GC.lockWait")
 	unlocker := bs.GCLock()
@@ -52,6 +53,7 @@ func GC(ctx context.Context, bs bstore.GCBlockstore, dstor dstore.Datastore, pn 
 	output := make(chan Result, 128)
 
 	go func() {
+		defer cancel()
 		defer close(output)
 		defer unlocker.Unlock()
 		defer elock.Done()
@@ -83,7 +85,7 @@ func GC(ctx context.Context, bs bstore.GCBlockstore, dstor dstore.Datastore, pn 
 		var removed uint64
 
 	loop:
-		for {
+		for ctx.Err() == nil { // select may not notice that we're "done".
 			select {
 			case k, ok := <-keychan:
 				if !ok {
@@ -94,8 +96,11 @@ func GC(ctx context.Context, bs bstore.GCBlockstore, dstor dstore.Datastore, pn 
 					removed++
 					if err != nil {
 						errors = true
-						output <- Result{Error: &CannotDeleteBlockError{k, err}}
-						//log.Errorf("Error removing key from blockstore: %s", err)
+						select {
+						case output <- Result{Error: &CannotDeleteBlockError{k, err}}:
+						case <-ctx.Done():
+							break loop
+						}
 						// continue as error is non-fatal
 						continue loop
 					}

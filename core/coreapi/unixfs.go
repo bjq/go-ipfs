@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/filestore"
 
 	"github.com/ipfs/go-ipfs/core/coreunix"
 
@@ -23,14 +22,15 @@ import (
 	unixfile "github.com/ipfs/go-unixfs/file"
 	uio "github.com/ipfs/go-unixfs/io"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
-	"github.com/ipfs/interface-go-ipfs-core/options"
+	options "github.com/ipfs/interface-go-ipfs-core/options"
+	path "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 type UnixfsAPI CoreAPI
 
 // Add builds a merkledag node from a reader, adds it to the blockstore,
 // and returns the key representing that node.
-func (api *UnixfsAPI) Add(ctx context.Context, files files.Node, opts ...options.UnixfsAddOption) (coreiface.ResolvedPath, error) {
+func (api *UnixfsAPI) Add(ctx context.Context, files files.Node, opts ...options.UnixfsAddOption) (path.Resolved, error) {
 	settings, prefix, err := options.UnixfsAddOptions(opts...)
 	if err != nil {
 		return nil, err
@@ -45,12 +45,12 @@ func (api *UnixfsAPI) Add(ctx context.Context, files files.Node, opts ...options
 	// TODO: this doesn't handle the case if the hashed file is already in blocks (deduplicated)
 	// TODO: conditional GC is disabled due to it is somehow not possible to pass the size to the daemon
 	//if err := corerepo.ConditionalGC(req.Context(), n, uint64(size)); err != nil {
-	//	res.SetError(err, cmdkit.ErrNormal)
+	//	res.SetError(err, cmds.ErrNormal)
 	//	return
 	//}
 
-	if settings.NoCopy && !cfg.Experimental.FilestoreEnabled {
-		return nil, filestore.ErrFilestoreNotEnabled
+	if settings.NoCopy && !(cfg.Experimental.FilestoreEnabled || cfg.Experimental.UrlstoreEnabled) {
+		return nil, fmt.Errorf("either the filestore or the urlstore must be enabled to use nocopy, see: https://git.io/vNItf")
 	}
 
 	addblockstore := api.blockstore
@@ -87,13 +87,10 @@ func (api *UnixfsAPI) Add(ctx context.Context, files files.Node, opts ...options
 		fileAdder.Out = settings.Events
 		fileAdder.Progress = settings.Progress
 	}
-	fileAdder.Hidden = settings.Hidden
-	fileAdder.Wrap = settings.Wrap
 	fileAdder.Pin = settings.Pin && !settings.OnlyHash
 	fileAdder.Silent = settings.Silent
 	fileAdder.RawLeaves = settings.RawLeaves
 	fileAdder.NoCopy = settings.NoCopy
-	fileAdder.Name = settings.StdinName
 	fileAdder.CidBuilder = prefix
 
 	switch settings.Layout {
@@ -129,10 +126,15 @@ func (api *UnixfsAPI) Add(ctx context.Context, files files.Node, opts ...options
 	if err != nil {
 		return nil, err
 	}
-	return coreiface.IpfsPath(nd.Cid()), nil
+
+	if err := api.provider.Provide(nd.Cid()); err != nil {
+		return nil, err
+	}
+
+	return path.IpfsPath(nd.Cid()), nil
 }
 
-func (api *UnixfsAPI) Get(ctx context.Context, p coreiface.Path) (files.Node, error) {
+func (api *UnixfsAPI) Get(ctx context.Context, p path.Path) (files.Node, error) {
 	ses := api.core().getSession(ctx)
 
 	nd, err := ses.ResolveNode(ctx, p)
@@ -145,7 +147,7 @@ func (api *UnixfsAPI) Get(ctx context.Context, p coreiface.Path) (files.Node, er
 
 // Ls returns the contents of an IPFS or IPNS object(s) at path p, with the format:
 // `<link base58 hash> <link size in bytes> <link name>`
-func (api *UnixfsAPI) Ls(ctx context.Context, p coreiface.Path, opts ...options.UnixfsLsOption) (<-chan coreiface.DirEntry, error) {
+func (api *UnixfsAPI) Ls(ctx context.Context, p path.Path, opts ...options.UnixfsLsOption) (<-chan coreiface.DirEntry, error) {
 	settings, err := options.UnixfsLsOptions(opts...)
 	if err != nil {
 		return nil, err

@@ -20,9 +20,9 @@ import (
 	"syscall"
 
 	logging "github.com/ipfs/go-log"
-	ci "github.com/libp2p/go-libp2p-crypto"
-	peer "github.com/libp2p/go-libp2p-peer"
-	pstore "github.com/libp2p/go-libp2p-peerstore"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
+	peer "github.com/libp2p/go-libp2p-core/peer"
+	pstore "github.com/libp2p/go-libp2p-core/peerstore"
 	pstoremem "github.com/libp2p/go-libp2p-peerstore/pstoremem"
 	secio "github.com/libp2p/go-libp2p-secio"
 )
@@ -129,8 +129,14 @@ func setupPeer(a args) (peer.ID, pstore.Peerstore, error) {
 	}
 
 	ps := pstoremem.NewPeerstore()
-	ps.AddPrivKey(p, sk)
-	ps.AddPubKey(p, pk)
+	err = ps.AddPrivKey(p, sk)
+	if err != nil {
+		return "", nil, err
+	}
+	err = ps.AddPubKey(p, pk)
+	if err != nil {
+		return "", nil, err
+	}
 
 	out("local peer id: %s", p)
 	return p, ps, nil

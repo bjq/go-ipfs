@@ -63,6 +63,7 @@ Available profiles:
 - [`Bootstrap`](#bootstrap)
 - [`Datastore`](#datastore)
 - [`Discovery`](#discovery)
+- [`Routing`](#routing)
 - [`Gateway`](#gateway)
 - [`Identity`](#identity)
 - [`Ipns`](#ipns)
@@ -152,6 +153,8 @@ Default: `1h`
 A boolean value. If set to true, all block reads from disk will be hashed and
 verified. This will cause increased CPU utilization.
 
+Default: `false`
+
 - `BloomFilterSize`
 A number representing the size in bytes of the blockstore's [bloom filter](https://en.wikipedia.org/wiki/Bloom_filter). A value of zero represents the feature being disabled.
 
@@ -214,12 +217,27 @@ Default: `true`
   -  `Interval`
 A number of seconds to wait between discovery checks.
 
-- `Routing`
-Content routing mode. Can be overridden with daemon `--routing` flag.
+
+## `Routing`
+Contains options for content routing mechanisms.
+
+- `Type`
+Content routing mode. Can be overridden with daemon `--routing` flag. When set to `dhtclient`, the node won't join the DHT but can still use it to find content.
 Valid modes are:
   - `dht` (default)
   - `dhtclient`
   - `none`
+  
+**Example:**
+
+```json
+{
+  "Routing": {
+    "Type": "dhtclient"
+  }
+}
+```  
+  
 
 ## `Gateway`
 Options for the HTTP gateway.
@@ -253,7 +271,7 @@ A url to redirect requests for `/` to.
 
 Default: `""`
 
-- `Writeable`
+- `Writable`
 A boolean to configure whether the gateway is writeable or not.
 
 Default: `false`
